@@ -1,185 +1,73 @@
-Droid Code – AI OS Terminal Browser
+Droid Code – an AI-powered terminal assistant that integrates web browsing, file system operations, shell commands, Git management, persistent memory, scheduling, subagent coordination, and a REST API. It is designed to run on systems with AMD GPUs (e.g., RX 6700) and uses Ollama for local LLM inference with automatic model selection based on available VRAM.
+Core Capabilities
 
-Droid Code is a powerful AI‑assisted terminal application that combines an autonomous web browser, file system access, shell execution, Git integration, memory, and advanced features like subagent coordination and memory consolidation. It uses a local LLM (via Ollama) to understand user goals and decide actions, making it a self‑contained AI agent that can browse, search, edit files, run commands, and more—all from your terminal.
+    AI Agent Loop – Accepts natural language goals (e.g., “find the latest AI news and save it to a file”). The agent autonomously searches the web, navigates pages, extracts answers, and invokes tools (file I/O, shell, Git, memory, etc.) until the goal is achieved.
 
-The script was inspired by the leaked source code of Anthropic’s Claude Code, implementing many of its architectural concepts (subagents, “dream” memory, Yolo auto‑approval, persistent background mode) in a clean‑room, open‑source manner.
-🚀 Features
-Feature	Description
-Web Browsing & Search	Fetches pages using lynx or requests, caches results, extracts links, and performs DuckDuckGo Lite searches.
-File System	Reads, writes, lists, and searches files within configurable trusted directories (strict sandbox).
-Shell Commands	Executes shell commands with a configurable allowlist. Supports Yolo mode for auto‑approval of safe commands via a simple ML classifier (or regex fallback).
-Git Integration	Basic Git operations: status, diff, commit, branch, log.
-Project Awareness	Parses codebases (Python, JS, etc.) to build a symbol index for better context.
-Memory	Stores key‑value memories in JSON. Also maintains conversation history.
-Dream / Memory Consolidation	Periodically summarizes recent conversations and stores the insights as memories.
-Subagents	Spawns background threads that run separate LLM tasks (parallel / isolated).
-Scheduling	Allows scheduling of shell commands or web fetches at specific times (daily).
-Push Notifications	Sends desktop notifications for completed tasks (optional).
-Persistent Background Mode	Watches file changes and can trigger actions (requires watchdog).
-Chat Mode	Direct conversation with the AI without triggering web browsing or tools (chat: your message).
-Manual Tool Invocation	Call any tool directly with !tool tool_name key=value ....
-API Server	Exposes a REST endpoint (/chat) for programmatic use.
-Model Management	Lists, selects, and pulls models via Ollama.
-📦 Installation
-Prerequisites
+    Web Browsing – Fetches pages via requests + BeautifulSoup, falls back to lynx for text‑only rendering. Supports search via DuckDuckGo Lite, link extraction, redirect resolution, and caching.
 
-    Python 3.8 or higher
+    File System Sandbox – Read/write/list/search only within trusted directories (configurable). Prevents access outside the sandbox.
 
-    Ollama installed and running (for LLM inference)
+    Shell Execution – Runs a whitelist of commands (ls, pwd, echo, cat, grep, git) with optional auto‑approval (“Yolo mode” that uses a naive Bayes classifier to distinguish safe from dangerous commands).
 
-Install dependencies
-bash
+    Git Integration – Status, diff, commit, branch, log.
 
-pip install requests pyyaml beautifulsoup4 rich ollama
-# Optional extras
-pip install aiohttp schedule watchdog plyer scikit-learn flask
+    Vector Memory – Stores key‑value memories with semantic search using sentence-transformers (all‑MiniLM‑L6‑v2). Supports exact lookup and similarity‑based recall.
 
-Download the script
+    Agentic Retrieval – Breaks complex questions into parallel sub‑queries, fetches relevant web content for each, and synthesizes a final answer.
 
-Save the latest version of droid_code.py from this repository.
-Make it executable (optional)
-bash
+    Subagent System – Spawns parallel threads to handle subtasks (e.g., summarise news while fetching another page). Results are collected and reported back.
 
-chmod +x droid_code.py
+    Multi‑File Editing – Accepts a list of file edits (path, content, append flag) in a single AI decision.
 
-🖥️ Usage
-Interactive mode
-bash
+    Scheduled Tasks – Uses the schedule library to run daily commands (shell or fetch URL) at a given time. Supports listing and cancelling tasks.
 
-python droid_code.py
+    Dream (Memory Consolidation) – Periodically (default hourly) extracts key facts from recent conversation turns and stores them as vector memories.
 
-API server mode
-bash
+    Chat Mode – Dedicated chat: prefix that streams LLM responses token‑by‑token (configurable).
 
-python droid_code.py --serve
+    Push Notifications – Desktop alerts via plyer for completed tasks or background events.
+
+    Background Agent – When persistent mode is enabled, watches the file system (using watchdog) and sends notifications on file modifications.
+
+    REST API – Optional Flask server (--serve) exposing a /chat endpoint that accepts JSON {"query": "..."} and returns the agent’s final answer.
+
+LLM & Hardware Optimization
+
+    Uses Ollama to run models locally. Automatically detects AMD GPU via Vulkan and sets environment variables (OLLAMA_GPU_OVERHEAD, HSA_OVERRIDE_GFX_VERSION, etc.) to accelerate inference.
+
+    Selects a model based on free VRAM (e.g., llama3.2:3b-q4_0 for <8 GB, llama3.2:7b-q4_0 for larger cards).
+
+    Dynamic model switching: simple tasks (summarisation, search) use a smaller 3B model, while complex tasks (debugging, synthesis) use a 7B model.
 
 Configuration
 
-Settings are stored in ~/.droid_code_config.yaml. Example:
-yaml
+Stored in ~/.droid_code_config.yaml (YAML). Key settings:
 
-model: llama3.2
-yolo_enabled: true
-shell_allowed_commands:
-  - ls
-  - pwd
-  - echo
-  - cat
-  - grep
-  - git
+    trusted_dirs: directories the agent can access.
 
-Commands in interactive mode
-Command	Description
-!model	Switch models (list available, pull new)
-!memory	View stored memories
-!tool tool_name [key=value ...]	Call any tool directly
-chat: your message	Have a direct conversation with the AI
-exit	Quit
+    model: default LLM.
 
-When you enter a goal (e.g., “find the latest AI news”), Droid Code will autonomously search, fetch pages, and execute tools until the goal is achieved.
-🧠 How It Works
+    yolo_enabled: if true, auto‑approve safe shell commands.
 
-    User input (goal) → process_query()
+    dream_interval: seconds between memory consolidation runs.
 
-    If needed, search the web (DuckDuckGo Lite) or fetch a page.
+    streaming_enabled: whether chat responses stream.
 
-    AI decision (decide_next_action()) → returns JSON with action (search, visit, extract, tool, multi‑edit, stop).
+    auto_model_switch: enable dynamic model selection.
 
-    Execute action: run tools, navigate, or extract answer.
+Usage
 
-    Loop until goal achieved or max steps reached.
+    Interactive mode (default): run the script, then type a goal (e.g., “compare the latest two commits and summarise the changes”). Special commands: !model (change LLM), !memory (list all memories), !embed <query> (semantic search), !tool <name> [key=value …] (direct tool call), chat:…, !stream (toggle streaming).
 
-    Optionally, user can interrupt, change model, or view memory.
+    API server: python droid_code.py --serve --port 5000
 
-Subagents
-
-Subagents are background threads that run separate LLM tasks. They are not separate models—they use the same model as the main session. They allow parallel tasks and isolation of subtasks.
-Yolo Mode
-
-If yolo_enabled: true in the config, commands deemed “safe” (by a simple ML classifier or regex) are auto‑approved. This is inspired by Claude Code’s “Yolo” feature.
-Dream / Memory Consolidation
-
-A background thread periodically summarizes recent conversations and stores the insights as memories, allowing the AI to “remember” across sessions.
-🧪 Example Session
-text
-
-What do you want to do?: What is the weather in Paris?
-Searching for: What is the weather in Paris?
-AI decision: This page contains the weather forecast for Paris.
-Following link: https://weather.com/weather/tenday/l/Paris+France...
-AI decision: The current weather in Paris is 18°C and partly cloudy.
-Done!
-
-Chat mode
-text
-
-What do you want to do?: chat: What do you think about AI safety?
-╭────────────────────── Chat Response ───────────────────────╮
-│ AI safety is a critical field... (AI’s response)           │
-╰────────────────────────────────────────────────────────────╯
-
-Manual tool invocation
-text
-
-What do you want to do?: !tool list_dir path="."
-╭──────────────────────── Directory: . ──────────────────────╮
-│ droid_code.py
-│ README.md
-│ ...
-╰────────────────────────────────────────────────────────────╯
-
-🔧 Advanced Configuration
-
-    trusted_dirs: List of allowed directories for file operations.
-
-    shell_allowed_commands: Commands that can be executed via the shell tool.
-
-    yolo_enabled: Auto‑approve safe shell commands.
-
-    dream_interval: Seconds between memory consolidation runs.
-
-    persistent_mode: Enable background file‑watching agent.
-
-    notification_enabled: Send desktop notifications for completed tasks.
-
-🛡️ Safety & Sandboxing
-
-    All file operations are restricted to trusted_dirs (default: ~/Documents, ~/Downloads, current directory).
-
-    Shell commands are limited to an allowlist (shell_allowed_commands).
-
-    Yolo mode auto‑approves commands based on safety heuristics (disabled by default).
-
-🤝 Credits
-
-Droid Code is heavily inspired by the Claude Code leak, which revealed an internal architecture with subagents, dream memory, Yolo auto‑approval, and more. This project is a clean‑room implementation, using only publicly available information about those concepts.
-
-Special thanks to the open‑source community and the maintainers of:
-
-    Ollama
-
-    Rich
-
-    Beautiful Soup
-
-    Requests
-
-📝 License
-
-MIT License – feel free to use, modify, and share.
-🧩 Contributing
-
-Issues, suggestions, and pull requests are welcome! Please keep the code aligned with the “leak‑inspired” spirit—clean‑room implementations only.
-
-Enjoy exploring the capabilities of your own AI‑driven terminal!
-
-#!/usr/bin/env python3
+The script is fully self‑contained (with optional dependencies for embeddings, scheduling, notifications, etc.) and is intended to run in a terminal, acting as a “terminal browser” that can read/write files, run commands, and browse the web under AI control. #!/usr/bin/env python3
 """
-Droid Code – AI OS Terminal Browser (Enhanced with Claude Code leak features)
+Droid Code – AI OS Terminal Browser with AMD GPU acceleration
 Features: Web browsing, file operations, shell, memory, Git, project awareness,
 multi-file editing, summarization, comparison, scheduling, subagent coordination,
 memory consolidation ("dream"), Yolo auto-approval, persistent background mode,
-chat mode, and chatbot API.
+chat mode, chatbot API, AGENTIC RETRIEVAL, VECTOR MEMORY, DYNAMIC MODELS, STREAMING.
 """
 
 import os
@@ -252,6 +140,14 @@ try:
 except ImportError:
     HAS_SKLEARN = False
 
+# ---------- Embeddings / vector memory ----------
+try:
+    from sentence_transformers import SentenceTransformer
+    import numpy as np
+    HAS_EMBEDDINGS = True
+except ImportError:
+    HAS_EMBEDDINGS = False
+
 # ------------------- Logging -------------------
 logging.basicConfig(
     level=logging.INFO,
@@ -278,9 +174,11 @@ DEFAULT_CONFIG = {
     "api_host": "127.0.0.1",
     "api_port": 5000,
     "yolo_enabled": False,
-    "dream_interval": 3600,          # seconds between memory consolidation
-    "persistent_mode": False,         # run background agent
-    "notification_enabled": True
+    "dream_interval": 3600,
+    "persistent_mode": False,
+    "notification_enabled": True,
+    "streaming_enabled": True,          # new
+    "auto_model_switch": True           # new
 }
 
 class Config:
@@ -314,7 +212,6 @@ class Config:
 
 config = Config()
 
-# Expand user paths in trusted dirs
 TRUSTED_DIRS = [Path(p).expanduser().resolve() for p in config.get("trusted_dirs")]
 
 # ---------- Session and cache ----------
@@ -322,7 +219,6 @@ session = requests.Session()
 session.headers.update({"User-Agent": config.get("user_agent")})
 console = Console()
 
-# Simple cache for web pages
 _cache = {}
 
 def get_cache(url: str) -> Optional[str]:
@@ -336,6 +232,44 @@ def get_cache(url: str) -> Optional[str]:
 
 def set_cache(url: str, content: str):
     _cache[url] = (datetime.now(), content)
+
+# ------------------- AMD GPU Optimization -------------------
+def ensure_amd_gpu_inference():
+    """Set environment variables to prefer GPU for Ollama on AMD."""
+    os.environ["OLLAMA_GPU_OVERHEAD"] = "1"
+    os.environ["HSA_OVERRIDE_GFX_VERSION"] = "10.3.0"  # for RX 6700 (gfx1030)
+    os.environ["OLLAMA_NUM_GPU"] = "1"
+    try:
+        result = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True)
+        if "Radeon RX 6700" in result.stdout:
+            console.print("[green]AMD GPU detected via Vulkan - inference will be fast.[/green]")
+            return True
+    except:
+        pass
+    console.print("[yellow]Vulkan not detected; falling back to CPU (slower).[/yellow]")
+    return False
+
+def get_gpu_memory_mb() -> int:
+    """Return free GPU memory in MB using rocm-smi or vulkan."""
+    try:
+        result = subprocess.run(["rocm-smi", "--showmeminfo", "vram"], capture_output=True, text=True)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "Total" in line and "MB" in line:
+                    total = int(re.search(r'(\d+)', line).group(1))
+                    return total
+    except:
+        pass
+    # Fallback: assume 12GB for RX 6700
+    return 12288
+
+def auto_select_model_based_on_vram() -> str:
+    vram_mb = get_gpu_memory_mb()
+    if vram_mb < 8000:
+        console.print("[yellow]Limited VRAM detected – using 3B quantized model.[/yellow]")
+        return "llama3.2:3b-q4_0"
+    else:
+        return "llama3.2:7b-q4_0"
 
 # ------------------- Model Management -------------------
 def get_available_models():
@@ -409,9 +343,9 @@ def select_model():
                 return new_model
             else:
                 console.print("[red]Pull failed or cancelled. Using default model.[/red]")
-                return "llama3.2"
+                return "llama3.2:7b-q4_0"
         elif any(phrase in choice_lower for phrase in ["default", "llama3.2"]):
-            return "llama3.2"
+            return "llama3.2:7b-q4_0"
         else:
             model_name = choice.strip()
             existing = next((m for m in models if m.lower() == model_name.lower()), None)
@@ -427,45 +361,111 @@ def select_model():
                     return model_name
                 else:
                     console.print("[red]Pull failed. Using default.[/red]")
-                    return "llama3.2"
+                    return "llama3.2:7b-q4_0"
 
-# ------------------- Memory Management -------------------
-def load_memory():
-    mem_path = Path(config.get("memory_file")).expanduser()
-    if mem_path.exists():
+def get_best_model_for_task(task_description: str) -> str:
+    """Return model name based on task complexity (if auto-switch enabled)."""
+    if not config.get("auto_model_switch"):
+        return config.get("model") or "llama3.2:7b-q4_0"
+    task_lower = task_description.lower()
+    if any(word in task_lower for word in ["summarize", "list", "status", "search", "chat"]):
+        return "llama3.2:3b-q4_0"
+    elif any(word in task_lower for word in ["compare", "explain", "write", "edit"]):
+        return "llama3.2:7b-q4_0"
+    elif any(word in task_lower for word in ["agentic", "retrieve", "decompose", "synthesize", "debug"]):
+        return "qwen2.5:7b"
+    else:
+        return config.get("model") or "llama3.2:7b-q4_0"
+
+# ------------------- Vector Memory (Semantic Search) -------------------
+class VectorMemory:
+    def __init__(self, model_name="all-MiniLM-L6-v2"):
+        if not HAS_EMBEDDINGS:
+            self.enabled = False
+            console.print("[yellow]sentence-transformers not installed. Vector memory disabled.[/yellow]")
+            return
+        self.model = SentenceTransformer(model_name, device="cpu")  # CPU is fine for embeddings
+        self.memories = []
+        self.load()
+        self.enabled = True
+
+    def load(self):
+        mem_path = Path(config.get("memory_file")).expanduser()
+        if mem_path.exists():
+            try:
+                with open(mem_path, 'r') as f:
+                    data = json.load(f)
+                # Recompute embeddings if missing (legacy)
+                for item in data:
+                    if "embedding" not in item:
+                        text = item.get("key", "") + " " + item.get("value", "")
+                        item["embedding"] = self.model.encode(text).tolist()
+                self.memories = data
+            except Exception as e:
+                logger.error(f"Failed to load vector memory: {e}")
+                self.memories = []
+        else:
+            self.memories = []
+
+    def save(self):
+        mem_path = Path(config.get("memory_file")).expanduser()
         try:
-            with open(mem_path, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+            with open(mem_path, 'w') as f:
+                json.dump(self.memories, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save vector memory: {e}")
 
-def save_memory(memory):
-    mem_path = Path(config.get("memory_file")).expanduser()
-    try:
-        with open(mem_path, 'w') as f:
-            json.dump(memory, f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to save memory: {e}")
+    def add(self, key: str, value: str):
+        if not self.enabled:
+            return
+        text = key + " " + value
+        emb = self.model.encode(text).tolist()
+        self.memories.append({"key": key, "value": value, "embedding": emb})
+        self.save()
 
-def memory_save(key, value):
-    mem = load_memory()
-    mem[key] = value
-    save_memory(mem)
+    def search(self, query: str, top_k: int = 3) -> List[Tuple[str, str]]:
+        if not self.enabled or not self.memories:
+            return []
+        q_emb = self.model.encode(query)
+        scores = []
+        for mem in self.memories:
+            emb = np.array(mem["embedding"])
+            sim = np.dot(q_emb, emb) / (np.linalg.norm(q_emb) * np.linalg.norm(emb) + 1e-8)
+            scores.append((sim, mem["key"], mem["value"]))
+        scores.sort(reverse=True, key=lambda x: x[0])
+        return [(key, value) for sim, key, value in scores[:top_k] if sim > 0.5]
+
+    def exact_get(self, key: str) -> Optional[str]:
+        for mem in self.memories:
+            if mem["key"] == key:
+                return mem["value"]
+        return None
+
+    def list_all(self) -> List[Tuple[str, str]]:
+        return [(mem["key"], mem["value"]) for mem in self.memories]
+
+vector_memory = VectorMemory()
+
+def memory_save(key: str, value: str) -> str:
+    vector_memory.add(key, value)
     return f"Saved memory: {key} = {value}"
 
-def memory_recall(key):
-    mem = load_memory()
-    value = mem.get(key)
-    if value is None:
-        return f"No memory found for key: {key}"
-    return value
+def memory_recall(key_or_query: str) -> str:
+    # Try exact match first
+    exact = vector_memory.exact_get(key_or_query)
+    if exact:
+        return exact
+    # Semantic search
+    results = vector_memory.search(key_or_query, top_k=1)
+    if results:
+        return f"Closest memory: {results[0][0]} = {results[0][1]}"
+    return f"No memory found for: {key_or_query}"
 
-def memory_list():
-    mem = load_memory()
-    if not mem:
+def memory_list() -> str:
+    memories = vector_memory.list_all()
+    if not memories:
         return "No memories stored."
-    return "\n".join(f"- {k}: {v}" for k, v in mem.items())
+    return "\n".join(f"- {k}: {v}" for k, v in memories)
 
 # ------------------- Conversation Memory -------------------
 def load_conversation():
@@ -500,7 +500,6 @@ def get_conversation_context(limit=10):
 
 # ------------------- Dream / Memory Consolidation -------------------
 def dream_cycle():
-    """Consolidate recent conversations into long-term memory."""
     conv = load_conversation()
     if not conv:
         return
@@ -513,7 +512,6 @@ def dream_cycle():
         logger.info("Dream cycle completed: consolidated memories")
 
 def start_dream_worker():
-    """Periodically run dream_cycle in background."""
     if not config.get("dream_interval"):
         return
     def worker():
@@ -529,7 +527,6 @@ def start_dream_worker():
 
 # ------------------- Yolo Mode Auto-Approval -------------------
 class YoloClassifier:
-    """Simple ML-based classifier to auto-approve safe commands."""
     def __init__(self):
         self.vectorizer = CountVectorizer()
         self.model = None
@@ -617,6 +614,104 @@ class Coordinator:
         while len(self.results) < len(self.subagents) and (time.time() - start) < timeout:
             time.sleep(0.1)
         return self.results
+
+# ------------------- Agentic Retrieval (Parallel Subqueries) -------------------
+def answer_subquery(subquery: str, context: str = "") -> str:
+    console.print(f"[dim]Subquery: {subquery}[/dim]")
+    search_results = search_duckduckgo_lite(subquery)
+    if "No results found" in search_results or "Search failed" in search_results:
+        prompt = f"Answer the following question concisely based on your own knowledge:\n{subquery}\nContext: {context}"
+        return ask_llm(prompt) or "No answer available."
+    lines = search_results.splitlines()
+    url = None
+    for line in lines:
+        if line.startswith("   http"):
+            url = line.strip()
+            break
+    if not url:
+        prompt = f"Answer the following question concisely based on your own knowledge:\n{subquery}"
+        return ask_llm(prompt) or "No answer available."
+    page_content = fetch_page(url)
+    if page_content.startswith("Error"):
+        prompt = f"Answer the following question concisely based on your own knowledge:\n{subquery}"
+        return ask_llm(prompt) or "No answer available."
+    max_chars = config.get("max_page_chars")
+    if len(page_content) > max_chars:
+        page_content = page_content[:max_chars] + "... [truncated]"
+    answer_prompt = f"""
+Use the following web page content to answer the question.
+If the content does not contain the answer, say so clearly.
+
+Question: {subquery}
+
+Web page content (from {url}):
+{page_content}
+
+Answer concisely:
+"""
+    answer = ask_llm(answer_prompt)
+    return answer if answer else "Could not extract answer."
+
+def agentic_retrieve(complex_query: str, history_context: str = "") -> str:
+    console.print("[bold cyan]Agentic Retrieval activated.[/bold cyan]")
+    decompose_prompt = f"""
+You are an AI that helps break down complex questions into independent sub‑questions.
+Each sub‑question should be answerable by a web search (e.g., factual, specific).
+Return ONLY a JSON list of strings, nothing else.
+
+Example:
+User: "What are the latest advancements in AI and how do they compare to human performance?"
+Output: ["What are the latest advancements in AI as of 2026?", "How does AI performance compare to human performance in various tasks?"]
+
+Now, break down the following question (consider the conversation history if provided):
+User question: {complex_query}
+
+Conversation history (may be empty):
+{history_context}
+
+Output JSON list:
+"""
+    decomposition_raw = ask_llm(decompose_prompt)
+    if not decomposition_raw:
+        return "Failed to decompose the query."
+    try:
+        start = decomposition_raw.find('[')
+        end = decomposition_raw.rfind(']') + 1
+        if start != -1 and end != -1:
+            json_str = decomposition_raw[start:end]
+            subqueries = json.loads(json_str)
+        else:
+            subqueries = json.loads(decomposition_raw)
+    except json.JSONDecodeError:
+        logger.error(f"Could not parse decomposition: {decomposition_raw}")
+        subqueries = [complex_query]
+    if not subqueries:
+        subqueries = [complex_query]
+    console.print(f"[green]Decomposed into {len(subqueries)} subqueries.[/green]")
+    results = [None] * len(subqueries)
+
+    def worker(idx, subq):
+        results[idx] = answer_subquery(subq, history_context)
+
+    threads = []
+    for i, subq in enumerate(subqueries):
+        t = threading.Thread(target=worker, args=(i, subq))
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join(timeout=60)
+    synthesis_input = "\n\n".join([f"Subquestion {i+1}: {subq}\nAnswer: {results[i] or 'No answer'}" for i, subq in enumerate(subqueries)])
+    synthesis_prompt = f"""
+Synthesize the following answers into a single, coherent, well‑structured answer that directly addresses the original query.
+
+Original query: {complex_query}
+
+{synthesis_input}
+
+Final answer:
+"""
+    final_answer = ask_llm(synthesis_prompt)
+    return final_answer if final_answer else "Synthesis failed."
 
 # ------------------- File System (Strict Sandbox) -------------------
 def _sanitize_path(path: Union[str, Path]) -> Path:
@@ -933,23 +1028,18 @@ def _safe_shell_command(cmd: str, auto_confirm: bool = False) -> str:
 
 # ------------------- Web Helpers -------------------
 def resolve_redirect(url: str) -> str:
-    """Resolve DuckDuckGo redirects and add scheme to // URLs."""
-    # Handle relative scheme URLs
     if url.startswith('//'):
         url = 'https:' + url
-    # Check for DuckDuckGo redirect link
     if 'duckduckgo.com/l/' in url:
         parsed = urlparse(url)
         qs = parse_qs(parsed.query)
         if 'uddg' in qs:
             target = qs['uddg'][0]
-            # Sometimes target is URL-encoded
             try:
                 target = unquote(target)
             except:
                 pass
             return target
-    # Follow redirects (HTTP 301/302)
     try:
         resp = session.get(url, allow_redirects=False, timeout=5)
         if resp.status_code in (301, 302) and 'Location' in resp.headers:
@@ -962,7 +1052,6 @@ def fetch_page(url: str) -> str:
     cached = get_cache(url)
     if cached is not None:
         return cached
-    # Normalize URL
     url = resolve_redirect(url)
     try:
         proc = subprocess.run(["lynx", "-dump", "-nolist", url],
@@ -1018,7 +1107,6 @@ async def fetch_page_async(url: str) -> str:
 
 def extract_links(page_text: str, base_url: str) -> List[Tuple[str, str]]:
     try:
-        # Use the actual base URL to fetch the page again for link extraction
         resp = session.get(base_url, timeout=30)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -1026,7 +1114,6 @@ def extract_links(page_text: str, base_url: str) -> List[Tuple[str, str]]:
         for a in soup.find_all("a", href=True):
             href = a["href"]
             full_url = urljoin(base_url, href)
-            # Normalize scheme
             if full_url.startswith('//'):
                 full_url = 'https:' + full_url
             text = a.get_text(strip=True)
@@ -1073,17 +1160,18 @@ def search_duckduckgo_lite(query: str) -> str:
     except Exception as e:
         return f"Search failed: {e}"
 
-# ------------------- AI Decision -------------------
-def ask_llm(prompt: str, context: str = "", stream: bool = False) -> Union[str, Any]:
+# ------------------- AI Decision (with dynamic model) -------------------
+def ask_llm(prompt: str, context: str = "", stream: bool = False, model: str = None) -> Union[str, Any]:
     full_prompt = f"{context}\n\n{prompt}" if context else prompt
+    model_to_use = model or config.get("model")
     try:
         if stream:
-            return ollama.chat(model=config.get("model"), messages=[{"role": "user", "content": full_prompt}], stream=True)
+            return ollama.chat(model=model_to_use, messages=[{"role": "user", "content": full_prompt}], stream=True)
         else:
-            response = ollama.chat(model=config.get("model"), messages=[{"role": "user", "content": full_prompt}])
+            response = ollama.chat(model=model_to_use, messages=[{"role": "user", "content": full_prompt}])
             return response["message"]["content"]
     except Exception as e:
-        logger.error(f"Error calling Ollama: {e}")
+        logger.error(f"Error calling Ollama with model {model_to_use}: {e}")
         return None
 
 def decide_next_action(user_query: str, current_url: str, page_text: str, available_links: List[Tuple[str, str]]) -> Dict:
@@ -1105,6 +1193,7 @@ You have access to additional tools:
 - **Subagent**: spawn_subagent(task, context) – starts a new subagent to handle a subtask in parallel.
 - **Multi‑edit**: multi_edit(edits) – where edits is a list of {"path": "...", "content": "...", "append": false} objects.
 - **Notification**: send_notification(title, message) – sends a desktop alert.
+- **Agentic Retrieval**: agentic_retrieve(query) – for complex questions that need multiple parallel sub‑queries.
 
 When you need to use a tool, respond with a JSON object that includes "action": "tool", "tool_name": <name>, and "tool_args": <arguments>.
 For example:
@@ -1112,6 +1201,7 @@ For example:
 {"action": "tool", "tool_name": "shell", "tool_args": {"command": "ls -la"}}
 {"action": "tool", "tool_name": "spawn_subagent", "tool_args": {"task": "summarize the latest news", "context": "focus on AI"}}
 {"action": "multi_edit", "edits": [{"path": "main.py", "content": "print('hello')"}, {"path": "utils.py", "content": "def foo(): pass"}], "reason": "Add new functions"}
+{"action": "agentic_retrieve", "query": "What are the pros and cons of electric cars?", "reason": "Complex question needing multiple sources"}
 """
     prompt = f"""
 You are Droid Code, an AI OS Terminal Browser. The user's goal is: "{user_query}"
@@ -1131,6 +1221,7 @@ Available links on this page:
 - If you are on a search results page, use "visit_link" with one of the URLs from the list.
 - If you are on a page that likely contains the answer, use "extract" to pull out the relevant information.
 - Only use "search" again if the current page is completely irrelevant.
+- For complex multi‑faceted questions, consider using "agentic_retrieve" instead of a single search.
 
 Decide what to do next. Choose one action from:
 - "search" (with query)
@@ -1138,6 +1229,7 @@ Decide what to do next. Choose one action from:
 - "extract" (with answer)
 - "tool" (with tool_name and tool_args)
 - "multi_edit" (with edits list)
+- "agentic_retrieve" (with query)
 - "stop"
 
 Respond with a JSON object. Example responses:
@@ -1146,18 +1238,17 @@ Respond with a JSON object. Example responses:
 {{"action": "search", "query": "latest AI news 2026", "reason": "No relevant results found"}}
 {{"action": "tool", "tool_name": "write_file", "tool_args": {{"path": "~/Documents/notes.txt", "content": "Meeting notes"}}, "reason": "User asked to save notes"}}
 {{"action": "multi_edit", "edits": [{{"path": "main.py", "content": "print('hello')"}}, {{"path": "utils.py", "content": "def foo(): pass"}}], "reason": "Add new functions"}}
+{{"action": "agentic_retrieve", "query": "Compare machine learning and deep learning", "reason": "User wants a detailed comparison"}}
 {{"action": "stop", "reason": "Goal achieved"}}
 
 Do NOT stop on a search results page. Always try to get to the actual content.
 """
-    response = ask_llm(prompt)
+    # Use dynamic model selection based on query complexity
+    best_model = get_best_model_for_task(user_query)
+    response = ask_llm(prompt, model=best_model)
     if not response:
         return {"action": "stop", "reason": "LLM error"}
 
-    # Uncomment to debug raw response
-    # console.print(f"[dim]Raw LLM response: {response}[/dim]")
-
-    # Try to extract JSON from the response
     json_match = re.search(r'\{.*\}', response, re.DOTALL)
     if json_match:
         try:
@@ -1165,7 +1256,6 @@ Do NOT stop on a search results page. Always try to get to the actual content.
         except json.JSONDecodeError:
             pass
 
-    # Fallback: try to fix common issues (e.g., missing quotes, etc.)
     try:
         return json.loads(response)
     except:
@@ -1173,7 +1263,6 @@ Do NOT stop on a search results page. Always try to get to the actual content.
 
 # ------------------- Tool Execution Helper -------------------
 def execute_tool(tool_name: str, tool_args: Dict, interactive: bool) -> Optional[str]:
-    """Execute a tool and return the result as string (or None if interactive handled)."""
     if tool_name == "read_file":
         path = tool_args.get("path")
         if path:
@@ -1366,7 +1455,6 @@ def execute_tool(tool_name: str, tool_args: Dict, interactive: bool) -> Optional
             sub = spawn_subagent(task, context)
             if interactive:
                 console.print(Panel(f"Subagent spawned for task: {task}", title="Subagent", border_style="blue"))
-                # Optionally wait for result
                 if Confirm.ask("Wait for subagent result?", default=True):
                     timeout = 30
                     start = time.time()
@@ -1381,7 +1469,6 @@ def execute_tool(tool_name: str, tool_args: Dict, interactive: bool) -> Optional
                 else:
                     return f"Subagent spawned (task: {task})"
             else:
-                # Non-interactive: just spawn and return immediately
                 return f"Subagent spawned (task: {task})"
         else:
             if interactive:
@@ -1399,26 +1486,55 @@ def execute_tool(tool_name: str, tool_args: Dict, interactive: bool) -> Optional
             if interactive:
                 console.print("[red]Missing message for send_notification[/red]")
             return "Missing message for send_notification"
+    elif tool_name == "agentic_retrieve":
+        query = tool_args.get("query", "")
+        if query:
+            history = get_conversation_context(limit=5)
+            history_str = "\n".join(f"{item['role']}: {item['content']}" for item in history)
+            result = agentic_retrieve(query, history_str)
+            if interactive:
+                console.print(Panel(Markdown(result), title="Agentic Retrieval Result", border_style="green"))
+            return result
+        else:
+            if interactive:
+                console.print("[red]Missing query for agentic_retrieve[/red]")
+            return "Missing query for agentic_retrieve"
     else:
         if interactive:
             console.print(f"[red]Unknown tool: {tool_name}[/red]")
         return f"Unknown tool: {tool_name}"
 
-# ------------------- Chat Feature -------------------
-def chat_with_ai(user_message: str) -> str:
-    """Handle a free‑form chat message (not a goal)."""
+# ------------------- Chat Feature with Streaming -------------------
+def chat_with_ai(user_message: str, stream: bool = None) -> str:
+    if stream is None:
+        stream = config.get("streaming_enabled", True)
     query = user_message.strip()
     if query.lower().startswith("chat:"):
         query = query[5:].strip()
     if not query:
         return "Please ask something after 'chat:'."
-    # Use a simple prompt (no tool instructions)
     prompt = f"You are Droid Code, a helpful AI assistant. Respond concisely and naturally to the user's message.\nUser: {query}\nAssistant:"
-    response = ask_llm(prompt)
-    if response:
-        return response
+    if stream:
+        stream_response = ask_llm(prompt, stream=True)
+        if stream_response:
+            console.print("[bold cyan]Assistant:[/bold cyan] ", end="")
+            full = ""
+            for chunk in stream_response:
+                if 'message' in chunk and 'content' in chunk['message']:
+                    content = chunk['message']['content']
+                    print(content, end="", flush=True)
+                    full += content
+            print()
+            return full
+        else:
+            return "Streaming not available."
     else:
-        return "Sorry, I couldn't generate a response."
+        response = ask_llm(prompt)
+        if response:
+            console.print(Panel(Markdown(response), title="Chat Response", border_style="cyan"))
+            return response
+        else:
+            return "Sorry, I couldn't generate a response."
 
 # ------------------- Persistent Background Agent -------------------
 class BackgroundAgent(FileSystemEventHandler):
@@ -1456,10 +1572,6 @@ def start_background_agent():
 
 # ------------------- Autonomous Query Processing -------------------
 def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
-    """
-    Process a single query autonomously, returning the final answer.
-    If interactive is True, it will show output and ask for confirmation at each step.
-    """
     current_url = None
     page_text = ""
     available_links = []
@@ -1467,7 +1579,6 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
     step_count = 0
     max_steps = 20
 
-    # Helper to handle special commands in interactive mode
     def handle_special(cmd: str) -> bool:
         if cmd.strip() == "!model":
             new_model = select_model()
@@ -1478,7 +1589,15 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
             mem_list = memory_list()
             console.print(Panel(mem_list, title="Memory Contents", border_style="green"))
             return True
-        # Manual tool invocation: !tool tool_name key=value ...
+        elif cmd.strip() == "!embed":
+            query = Prompt.ask("Search memory for")
+            results = vector_memory.search(query)
+            if results:
+                for key, val in results:
+                    console.print(f"[cyan]{key}:[/cyan] {val}")
+            else:
+                console.print("No relevant memories found.")
+            return True
         elif cmd.strip().startswith("!tool"):
             parts = cmd.strip().split()
             if len(parts) < 2:
@@ -1489,7 +1608,6 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
             for part in parts[2:]:
                 if '=' in part:
                     key, val = part.split('=', 1)
-                    # Try to convert numeric or bool
                     if val.lower() == 'true':
                         val = True
                     elif val.lower() == 'false':
@@ -1502,38 +1620,34 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
                         except:
                             pass
                     tool_args[key] = val
-                else:
-                    # assume positional? not supported; ignore
-                    pass
-            # Execute the tool
             execute_tool(tool_name, tool_args, interactive=True)
             return True
         elif cmd.lower().startswith("chat:"):
-            answer = chat_with_ai(cmd)
-            console.print(Panel(Markdown(answer), title="Chat Response", border_style="cyan"))
+            chat_with_ai(cmd, stream=config.get("streaming_enabled", True))
+            return True
+        elif cmd.strip() == "!stream":
+            new_state = not config.get("streaming_enabled", True)
+            config.set("streaming_enabled", new_state)
+            console.print(f"[green]Streaming {'enabled' if new_state else 'disabled'}.[/green]")
             return True
         return False
 
-    # If we're in interactive mode and the initial query is a special command, handle it directly
     if interactive and handle_special(user_query):
         return None
 
     while step_count < max_steps:
         step_count += 1
 
-        # Check for special commands again inside the loop (for manual input after continue)
         if interactive and handle_special(user_query):
             user_query = Prompt.ask("[bold yellow]What do you want to do?[/bold yellow]")
             if user_query.lower() in ("exit", "quit"):
                 break
             continue
 
-        # If no web context and not a special command, start with search
         if current_url is None and not user_query.startswith("!"):
             if interactive:
                 console.print(f"[green]Searching for: {user_query}[/green]")
             page_text = search_duckduckgo_lite(user_query)
-            # Extract links from search results
             url = "https://lite.duckduckgo.com/lite/"
             params = {"q": user_query}
             try:
@@ -1572,7 +1686,6 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
                 console.print("[dim]Extracting links from page...[/dim]")
             available_links = extract_links(page_text, current_url)
 
-        # Show preview if interactive
         if interactive and page_text and page_text != "No results found." and not user_query.startswith("!"):
             preview = page_text[:1000] + "..." if len(page_text) > 1000 else page_text
             console.print(Panel(preview, title=f"Current page: {current_url if current_url else 'Search Results'}", border_style="blue"))
@@ -1643,8 +1756,16 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
                 if interactive:
                     console.print("[red]No tool name provided.[/red]")
                 break
-            # Execute the tool using the helper
             execute_tool(tool_name, tool_args, interactive)
+        elif action == "agentic_retrieve":
+            query = decision.get("query", user_query)
+            history = get_conversation_context(limit=5)
+            history_str = "\n".join(f"{item['role']}: {item['content']}" for item in history)
+            result = agentic_retrieve(query, history_str)
+            if interactive:
+                console.print(Panel(Markdown(result), title="Agentic Retrieval Answer", border_style="green"))
+            final_answer = result
+            break
         else:
             if interactive:
                 console.print(f"[red]Unknown action: {action}. Exiting.[/red]")
@@ -1652,7 +1773,7 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
 
         if interactive:
             if not Confirm.ask("[bold yellow]Continue with AI?[/bold yellow]", default=True):
-                manual = Prompt.ask("Enter command (URL, !model, !memory, !tool, chat:, 'exit')")
+                manual = Prompt.ask("Enter command (URL, !model, !memory, !embed, !tool, chat:, 'exit')")
                 if manual.lower() == "exit":
                     break
                 else:
@@ -1696,28 +1817,38 @@ def start_api_server(host: str = None, port: int = None):
 
 # ------------------- Main Interactive Loop -------------------
 def interactive_main():
-    console.print(Panel.fit("[bold cyan]Droid Code[/bold cyan] - AI-powered assistant with web, file, shell, Git, scheduling, subagents, dream memory, and more", style="bold"))
+    console.print(Panel.fit("[bold cyan]Droid Code[/bold cyan] - AI-powered assistant with AMD GPU acceleration, vector memory, streaming, agentic retrieval", style="bold"))
 
+    # Check Ollama
     try:
         subprocess.run(["ollama", "--version"], capture_output=True, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         console.print("[red]Ollama not found. Please install Ollama and make sure it's running.[/red]")
         sys.exit(1)
 
-    model = config.get("model")
-    if not model:
-        model = select_model()
-        config.set("model", model)
-    else:
-        console.print(f"[green]Using model from config: {model}[/green]")
+    # AMD GPU optimization
+    ensure_amd_gpu_inference()
 
-    # Start background workers
+    # Auto-select model based on VRAM if not set
+    if not config.get("model"):
+        suggested = auto_select_model_based_on_vram()
+        config.set("model", suggested)
+        console.print(f"[green]Auto-selected model based on GPU: {suggested}[/green]")
+    else:
+        console.print(f"[green]Using model from config: {config.get('model')}[/green]")
+
     start_dream_worker()
     start_scheduler()
     background_agent = start_background_agent()
 
-    console.print("\n[bold yellow]Enter your goal. You can ask me to browse the web, read/write files, run commands, manage Git, schedule tasks, spawn subagents, etc.[/bold yellow]")
-    console.print("Type 'exit' to quit. During session, type '!model' to switch models, '!memory' to view memory, '!tool' to call a tool manually, or 'chat: ...' to have a conversation.\n")
+    console.print("\n[bold yellow]Enter your goal. You can ask me to browse the web, read/write files, run commands, manage Git, schedule tasks, spawn subagents, or use agentic retrieval for complex questions.[/bold yellow]")
+    console.print("Type 'exit' to quit. Special commands:")
+    console.print("  !model   - switch LLM model")
+    console.print("  !memory  - list stored memories")
+    console.print("  !embed   - semantic search memory")
+    console.print("  !tool    - call a tool manually")
+    console.print("  chat:... - chat mode (with streaming)")
+    console.print("  !stream  - toggle streaming responses\n")
 
     user_query = Prompt.ask("[bold yellow]What do you want to do?[/bold yellow]")
     while user_query.lower() not in ("exit", "quit"):
@@ -1726,7 +1857,6 @@ def interactive_main():
             console.print(Panel(Markdown(result), title="Final Answer", border_style="green"))
         user_query = Prompt.ask("[bold yellow]What do you want to do?[/bold yellow]")
 
-    # Cleanup
     stop_scheduler()
     if background_agent:
         background_agent.stop()
@@ -1734,7 +1864,7 @@ def interactive_main():
 
 # ------------------- Command-line Entry -------------------
 def main():
-    parser = argparse.ArgumentParser(description="Droid Code – AI OS Terminal Browser")
+    parser = argparse.ArgumentParser(description="Droid Code – AI OS Terminal Browser with AMD GPU acceleration")
     parser.add_argument('--serve', action='store_true', help="Start API server instead of interactive mode")
     parser.add_argument('--host', default=None, help="Host for API server")
     parser.add_argument('--port', type=int, default=None, help="Port for API server")
