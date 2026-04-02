@@ -4,7 +4,8 @@ Droid Code – AI OS Terminal Browser with AMD GPU acceleration
 Features: Web browsing, file operations, shell, memory, Git, project awareness,
 multi-file editing, summarization, comparison, scheduling, subagent coordination,
 memory consolidation ("dream"), Yolo auto-approval, persistent background mode,
-chat mode, chatbot API, AGENTIC RETRIEVAL, VECTOR MEMORY, DYNAMIC MODELS, STREAMING.
+chat mode, chatbot API, AGENTIC RETRIEVAL, VECTOR MEMORY, DYNAMIC MODELS, STREAMING,
+PLAN MODE (break down tasks, execute step-by-step).
 """
 
 import os
@@ -114,8 +115,9 @@ DEFAULT_CONFIG = {
     "dream_interval": 3600,
     "persistent_mode": False,
     "notification_enabled": True,
-    "streaming_enabled": True,          # new
-    "auto_model_switch": True           # new
+    "streaming_enabled": True,
+    "auto_model_switch": True,
+    "plan_confirm_steps": True,      # new: ask before each plan step
 }
 
 class Config:
@@ -650,6 +652,186 @@ Final answer:
     final_answer = ask_llm(synthesis_prompt)
     return final_answer if final_answer else "Synthesis failed."
 
+# ==================== PLAN MODE ADDITIONS ====================
+
+class Plan:
+    """Represents a step-by-step plan for achieving a goal."""
+    def __init__(self, goal: str, steps: List[str], clarifying_answers: Dict[str, str] = None):
+        self.goal = goal
+        self.steps = steps
+        self.current_step = 0
+        self.status = "created"  # created, executing, completed, failed, paused
+        self.results = []         # results of each step
+        self.clarifying_answers = clarifying_answers or {}
+
+    def to_dict(self):
+        return {
+            "goal": self.goal,
+            "steps": self.steps,
+            "current_step": self.current_step,
+            "status": self.status,
+            "results": self.results,
+            "clarifying_answers": self.clarifying_answers,
+        }
+
+    def from_dict(data):
+        p = Plan(data["goal"], data["steps"], data.get("clarifying_answers"))
+        p.current_step = data.get("current_step", 0)
+        p.status = data.get("status", "created")
+        p.results = data.get("results", [])
+        return p
+
+# Global active plan
+active_plan: Optional[Plan] = None
+
+def generate_plan(goal: str, conversation_history: str = "") -> Optional[Plan]:
+    """Ask the LLM to generate a structured plan with clarifying questions first."""
+    # First, ask clarifying questions if needed
+    clarify_prompt = f"""
+You are Droid Code, an AI assistant with plan mode.
+The user has given the following goal: "{goal}"
+
+Before creating a plan, you may need to ask clarifying questions if the goal is ambiguous or missing critical information (e.g., deadlines, constraints, specific outputs, resources).
+
+If you need more information, respond with a JSON object:
+{{"need_clarification": true, "questions": ["question1", "question2"]}}
+
+If the goal is clear and you can create a plan immediately, respond with:
+{{"need_clarification": false, "plan": ["step 1", "step 2", ...]}}
+
+Do not output anything else.
+"""
+    response = ask_llm(clarify_prompt)
+    if not response:
+        return None
+    try:
+        data = json.loads(response)
+    except:
+        # fallback: treat as plan
+        lines = response.strip().split('\n')
+        steps = [line.strip('- 0123456789. ') for line in lines if line.strip()]
+        if steps:
+            return Plan(goal, steps)
+        return None
+
+    if data.get("need_clarification"):
+        console.print("[yellow]The AI needs some clarification:[/yellow]")
+        answers = {}
+        for q in data.get("questions", []):
+            ans = Prompt.ask(f"[bold cyan]❓ {q}[/bold cyan]")
+            answers[q] = ans
+        # Now regenerate plan with answers
+        context = "\n".join(f"Q: {q}\nA: {a}" for q, a in answers.items())
+        final_plan_prompt = f"""
+Goal: {goal}
+
+Additional information provided by user:
+{context}
+
+Generate a concrete step-by-step plan to achieve the goal. Return ONLY a JSON list of strings: ["step 1", "step 2", ...]
+"""
+        plan_response = ask_llm(final_plan_prompt)
+        if plan_response:
+            try:
+                steps = json.loads(plan_response)
+                return Plan(goal, steps, answers)
+            except:
+                # fallback: parse lines
+                steps = [line.strip('- 0123456789. ') for line in plan_response.split('\n') if line.strip()]
+                return Plan(goal, steps, answers)
+        return None
+    else:
+        steps = data.get("plan", [])
+        if steps:
+            return Plan(goal, steps)
+        return None
+
+def execute_plan_step(step: str, step_index: int, total_steps: int) -> str:
+    """Execute a single step using the assistant's normal capabilities."""
+    console.print(f"[bold blue]▶ Step {step_index+1}/{total_steps}: {step}[/bold blue]")
+    # We treat the step as a new user query, but within the context of the plan.
+    # Use process_query in a non-interactive mode to get the result.
+    # To avoid infinite loops, we call a version that returns the answer without plan mode recursion.
+    result = process_query(step, interactive=False, plan_mode_execution=True)
+    if result is None:
+        result = "Step completed (no specific output)."
+    console.print(f"[dim]Step result: {result[:500]}[/dim]")
+    return result
+
+def run_plan(plan: Plan, confirm_steps: bool = None) -> str:
+    """Execute the plan step by step."""
+    if confirm_steps is None:
+        confirm_steps = config.get("plan_confirm_steps", True)
+
+    plan.status = "executing"
+    console.print(Panel(f"[bold green]Executing plan for: {plan.goal}[/bold green]\n"
+                        f"Steps: {len(plan.steps)}", title="Plan Execution"))
+
+    for i, step in enumerate(plan.steps[plan.current_step:], start=plan.current_step):
+        if confirm_steps:
+            if not Confirm.ask(f"Execute step {i+1}/{len(plan.steps)}?\n   {step}", default=True):
+                console.print("[yellow]Plan paused by user.[/yellow]")
+                plan.status = "paused"
+                return f"Plan paused at step {i+1}."
+        try:
+            result = execute_plan_step(step, i, len(plan.steps))
+            plan.results.append(result)
+            plan.current_step = i + 1
+        except Exception as e:
+            plan.status = "failed"
+            logger.error(f"Plan step failed: {e}")
+            return f"Plan failed at step {i+1}: {e}"
+        console.print("[green]✓ Step completed.[/green]\n")
+
+    plan.status = "completed"
+    summary = f"Plan completed successfully. Goal: {plan.goal}\n\n"
+    for i, (step, res) in enumerate(zip(plan.steps, plan.results)):
+        summary += f"**Step {i+1}:** {step}\n   Result: {res[:200]}...\n\n"
+    console.print(Panel(Markdown(summary), title="Plan Summary", border_style="green"))
+    return summary
+
+def plan_command(goal: str) -> str:
+    """Handle !plan command."""
+    global active_plan
+    console.print(f"[cyan]Generating plan for: {goal}[/cyan]")
+    plan = generate_plan(goal)
+    if not plan:
+        return "Failed to generate a plan."
+    active_plan = plan
+    # Show plan to user
+    steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan.steps))
+    console.print(Panel(f"[bold]Goal:[/bold] {plan.goal}\n\n[bold]Steps:[/bold]\n{steps_text}", title="Generated Plan"))
+    if Confirm.ask("Execute this plan now?", default=True):
+        return run_plan(plan)
+    else:
+        plan.status = "created"
+        return "Plan created but not executed. Use !execute to run it."
+
+def execute_plan_command() -> str:
+    """Execute the active plan."""
+    global active_plan
+    if not active_plan:
+        return "No active plan. Use !plan <goal> first."
+    if active_plan.status == "completed":
+        return "Plan already completed. Create a new plan with !plan."
+    return run_plan(active_plan)
+
+def plan_status_command() -> str:
+    """Show status of active plan."""
+    global active_plan
+    if not active_plan:
+        return "No active plan."
+    status = active_plan.status
+    current = active_plan.current_step
+    total = len(active_plan.steps)
+    if status == "executing":
+        prog = f"Step {current+1}/{total}" if current < total else "All steps done"
+    else:
+        prog = f"{current}/{total} steps completed"
+    return f"Plan status: {status}\nGoal: {active_plan.goal}\nProgress: {prog}\nCurrent step: {active_plan.steps[current] if current < total else 'N/A'}"
+
+# ==================== END PLAN MODE ADDITIONS ====================
+
 # ------------------- File System (Strict Sandbox) -------------------
 def _sanitize_path(path: Union[str, Path]) -> Path:
     try:
@@ -1131,6 +1313,8 @@ You have access to additional tools:
 - **Multi‑edit**: multi_edit(edits) – where edits is a list of {"path": "...", "content": "...", "append": false} objects.
 - **Notification**: send_notification(title, message) – sends a desktop alert.
 - **Agentic Retrieval**: agentic_retrieve(query) – for complex questions that need multiple parallel sub‑queries.
+- **Plan**: generate_plan(goal) – create a structured step-by-step plan.
+- **Execute plan**: run_plan(plan) – execute an existing plan.
 
 When you need to use a tool, respond with a JSON object that includes "action": "tool", "tool_name": <name>, and "tool_args": <arguments>.
 For example:
@@ -1139,6 +1323,7 @@ For example:
 {"action": "tool", "tool_name": "spawn_subagent", "tool_args": {"task": "summarize the latest news", "context": "focus on AI"}}
 {"action": "multi_edit", "edits": [{"path": "main.py", "content": "print('hello')"}, {"path": "utils.py", "content": "def foo(): pass"}], "reason": "Add new functions"}
 {"action": "agentic_retrieve", "query": "What are the pros and cons of electric cars?", "reason": "Complex question needing multiple sources"}
+{"action": "plan", "goal": "Create a weekly report", "reason": "User wants a multi-step plan"}
 """
     prompt = f"""
 You are Droid Code, an AI OS Terminal Browser. The user's goal is: "{user_query}"
@@ -1159,6 +1344,7 @@ Available links on this page:
 - If you are on a page that likely contains the answer, use "extract" to pull out the relevant information.
 - Only use "search" again if the current page is completely irrelevant.
 - For complex multi‑faceted questions, consider using "agentic_retrieve" instead of a single search.
+- If the user's request is complex and would benefit from a multi‑step plan, use "plan" action.
 
 Decide what to do next. Choose one action from:
 - "search" (with query)
@@ -1167,6 +1353,7 @@ Decide what to do next. Choose one action from:
 - "tool" (with tool_name and tool_args)
 - "multi_edit" (with edits list)
 - "agentic_retrieve" (with query)
+- "plan" (with goal)
 - "stop"
 
 Respond with a JSON object. Example responses:
@@ -1176,6 +1363,7 @@ Respond with a JSON object. Example responses:
 {{"action": "tool", "tool_name": "write_file", "tool_args": {{"path": "~/Documents/notes.txt", "content": "Meeting notes"}}, "reason": "User asked to save notes"}}
 {{"action": "multi_edit", "edits": [{{"path": "main.py", "content": "print('hello')"}}, {{"path": "utils.py", "content": "def foo(): pass"}}], "reason": "Add new functions"}}
 {{"action": "agentic_retrieve", "query": "Compare machine learning and deep learning", "reason": "User wants a detailed comparison"}}
+{{"action": "plan", "goal": "Write a report on project status", "reason": "Complex task needing multiple steps"}}
 {{"action": "stop", "reason": "Goal achieved"}}
 
 Do NOT stop on a search results page. Always try to get to the actual content.
@@ -1507,8 +1695,12 @@ def start_background_agent():
     agent.start(".")
     return agent
 
-# ------------------- Autonomous Query Processing -------------------
-def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
+# ------------------- Autonomous Query Processing (with plan mode integration) -------------------
+def process_query(user_query: str, interactive: bool = False, plan_mode_execution: bool = False) -> Optional[str]:
+    """
+    Process a user query. If plan_mode_execution is True, avoid re-entering plan mode
+    to prevent infinite loops.
+    """
     current_url = None
     page_text = ""
     available_links = []
@@ -1566,6 +1758,25 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
             new_state = not config.get("streaming_enabled", True)
             config.set("streaming_enabled", new_state)
             console.print(f"[green]Streaming {'enabled' if new_state else 'disabled'}.[/green]")
+            return True
+        # Plan mode special commands
+        elif cmd.strip().startswith("!plan "):
+            goal = cmd[6:].strip()
+            if not goal:
+                console.print("[red]Usage: !plan <goal>[/red]")
+                return True
+            result = plan_command(goal)
+            if result:
+                console.print(result)
+            return True
+        elif cmd.strip() == "!execute":
+            result = execute_plan_command()
+            if result:
+                console.print(result)
+            return True
+        elif cmd.strip() == "!plan_status":
+            result = plan_status_command()
+            console.print(result)
             return True
         return False
 
@@ -1703,14 +1914,35 @@ def process_query(user_query: str, interactive: bool = False) -> Optional[str]:
                 console.print(Panel(Markdown(result), title="Agentic Retrieval Answer", border_style="green"))
             final_answer = result
             break
+        elif action == "plan":
+            if plan_mode_execution:
+                # Avoid recursive plan generation
+                if interactive:
+                    console.print("[red]Plan generation disabled during plan execution to avoid loops.[/red]")
+                final_answer = "Plan generation not allowed here."
+                break
+            goal = decision.get("goal", user_query)
+            plan = generate_plan(goal)
+            if plan:
+                # Show plan and ask to execute
+                steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan.steps))
+                console.print(Panel(f"[bold]Goal:[/bold] {plan.goal}\n\n[bold]Steps:[/bold]\n{steps_text}", title="Generated Plan"))
+                if Confirm.ask("Execute this plan now?", default=True):
+                    result = run_plan(plan)
+                    final_answer = result
+                else:
+                    final_answer = "Plan created but not executed."
+            else:
+                final_answer = "Failed to generate a plan."
+            break
         else:
             if interactive:
                 console.print(f"[red]Unknown action: {action}. Exiting.[/red]")
             break
 
-        if interactive:
+        if interactive and not plan_mode_execution:
             if not Confirm.ask("[bold yellow]Continue with AI?[/bold yellow]", default=True):
-                manual = Prompt.ask("Enter command (URL, !model, !memory, !embed, !tool, chat:, 'exit')")
+                manual = Prompt.ask("Enter command (URL, !model, !memory, !embed, !tool, !plan, chat:, 'exit')")
                 if manual.lower() == "exit":
                     break
                 else:
@@ -1754,7 +1986,7 @@ def start_api_server(host: str = None, port: int = None):
 
 # ------------------- Main Interactive Loop -------------------
 def interactive_main():
-    console.print(Panel.fit("[bold cyan]Droid Code[/bold cyan] - AI-powered assistant with AMD GPU acceleration, vector memory, streaming, agentic retrieval", style="bold"))
+    console.print(Panel.fit("[bold cyan]Droid Code[/bold cyan] - AI-powered assistant with AMD GPU acceleration, vector memory, streaming, agentic retrieval, PLAN MODE", style="bold"))
 
     # Check Ollama
     try:
@@ -1778,14 +2010,17 @@ def interactive_main():
     start_scheduler()
     background_agent = start_background_agent()
 
-    console.print("\n[bold yellow]Enter your goal. You can ask me to browse the web, read/write files, run commands, manage Git, schedule tasks, spawn subagents, or use agentic retrieval for complex questions.[/bold yellow]")
+    console.print("\n[bold yellow]Enter your goal. You can ask me to browse the web, read/write files, run commands, manage Git, schedule tasks, spawn subagents, use agentic retrieval, or CREATE PLANS for complex tasks.[/bold yellow]")
     console.print("Type 'exit' to quit. Special commands:")
-    console.print("  !model   - switch LLM model")
-    console.print("  !memory  - list stored memories")
-    console.print("  !embed   - semantic search memory")
-    console.print("  !tool    - call a tool manually")
-    console.print("  chat:... - chat mode (with streaming)")
-    console.print("  !stream  - toggle streaming responses\n")
+    console.print("  !model          - switch LLM model")
+    console.print("  !memory         - list stored memories")
+    console.print("  !embed          - semantic search memory")
+    console.print("  !tool           - call a tool manually")
+    console.print("  chat:...        - chat mode (with streaming)")
+    console.print("  !stream         - toggle streaming responses")
+    console.print("  !plan <goal>    - create a step-by-step plan")
+    console.print("  !execute        - execute the active plan")
+    console.print("  !plan_status    - show current plan status\n")
 
     user_query = Prompt.ask("[bold yellow]What do you want to do?[/bold yellow]")
     while user_query.lower() not in ("exit", "quit"):
@@ -1801,7 +2036,7 @@ def interactive_main():
 
 # ------------------- Command-line Entry -------------------
 def main():
-    parser = argparse.ArgumentParser(description="Droid Code – AI OS Terminal Browser with AMD GPU acceleration")
+    parser = argparse.ArgumentParser(description="Droid Code – AI OS Terminal Browser with AMD GPU acceleration and plan mode")
     parser.add_argument('--serve', action='store_true', help="Start API server instead of interactive mode")
     parser.add_argument('--host', default=None, help="Host for API server")
     parser.add_argument('--port', type=int, default=None, help="Port for API server")
